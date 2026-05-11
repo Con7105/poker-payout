@@ -8,8 +8,8 @@ import {
   sumNetCents,
 } from "./settle";
 
-function pid(name: string, cashoutCents: number) {
-  return { id: name, name, cashoutCents };
+function p(id: string, buyinCents: number, cashoutCents: number) {
+  return { id, name: id, buyinCents, cashoutCents };
 }
 
 describe("dollarsStringToCents", () => {
@@ -25,10 +25,20 @@ describe("dollarsStringToCents", () => {
 });
 
 describe("computeNets & conservation", () => {
-  it("nets sum to zero when totals match", () => {
-    const buyin = 2000;
-    const players = [pid("A", 0), pid("B", 4000), pid("C", 2000), pid("D", 2000)];
-    const nets = computeNets(buyin, players);
+  it("nets sum to zero when uniform buy-ins and totals match", () => {
+    const players = [
+      p("A", 2000, 0),
+      p("B", 2000, 4000),
+      p("C", 2000, 2000),
+      p("D", 2000, 2000),
+    ];
+    const nets = computeNets(players);
+    expect(sumNetCents(nets)).toBe(0);
+  });
+
+  it("nets sum to zero with different buy-ins per player", () => {
+    const players = [p("A", 1000, 0), p("B", 1500, 2500)];
+    const nets = computeNets(players);
     expect(sumNetCents(nets)).toBe(0);
   });
 });
@@ -69,9 +79,13 @@ describe("minTransactions", () => {
 
 describe("settle", () => {
   it("returns transfers on balanced input", () => {
-    const buyin = 2000;
-    const players = [pid("A", 0), pid("B", 4000), pid("C", 2000), pid("D", 2000)];
-    const r = settle(buyin, players);
+    const players = [
+      p("A", 2000, 0),
+      p("B", 2000, 4000),
+      p("C", 2000, 2000),
+      p("D", 2000, 2000),
+    ];
+    const r = settle(players);
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.transfers.length).toBeLessThanOrEqual(3);
@@ -92,8 +106,19 @@ describe("settle", () => {
     }
   });
 
+  it("settles with mixed buy-ins", () => {
+    const r = settle([p("A", 1000, 0), p("B", 1500, 2500)]);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.transfers).toHaveLength(1);
+      expect(r.transfers[0].fromName).toBe("A");
+      expect(r.transfers[0].toName).toBe("B");
+      expect(r.transfers[0].cents).toBe(1000);
+    }
+  });
+
   it("rejects imbalance", () => {
-    const r = settle(2000, [pid("A", 0), pid("B", 1000)]);
+    const r = settle([p("A", 2000, 0), p("B", 2000, 1000)]);
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.code).toBe("imbalance");
@@ -102,7 +127,7 @@ describe("settle", () => {
   });
 
   it("handles no players", () => {
-    const r = settle(100, []);
+    const r = settle([]);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe("no_players");
   });

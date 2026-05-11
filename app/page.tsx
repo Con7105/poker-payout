@@ -9,28 +9,59 @@ import {
   type Transfer,
 } from "@/lib/settle";
 
-type Row = { id: string; name: string; cashout: string };
+type Row = { id: string; name: string; buyin: string; cashout: string };
 
-function newRow(): Row {
-  return { id: crypto.randomUUID(), name: "", cashout: "" };
+function newRow(defaultBuyin?: string): Row {
+  return {
+    id: crypto.randomUUID(),
+    name: "",
+    buyin: defaultBuyin ?? "",
+    cashout: "",
+  };
 }
 
-function buildPlayers(rows: Row[]): { players: PlayerInput[]; parseError: string | null } {
+type BuyinMode = "uniform" | "custom";
+
+function buildPlayers(
+  rows: Row[],
+  mode: BuyinMode,
+  uniformBuyinCents: number,
+): { players: PlayerInput[]; parseError: string | null } {
   const players: PlayerInput[] = [];
   for (const row of rows) {
     const name = row.name.trim();
-    const cents = dollarsStringToCents(row.cashout);
-    if (name === "" && row.cashout.trim() === "") continue;
+    const cashout = dollarsStringToCents(row.cashout);
+    const rowHasData =
+      name !== "" ||
+      row.cashout.trim() !== "" ||
+      (mode === "custom" && row.buyin.trim() !== "");
+    if (!rowHasData) continue;
+
     if (name === "") {
-      return { players: [], parseError: "Each cash-out row needs a player name." };
+      return { players: [], parseError: "Each filled row needs a player name." };
     }
-    if (cents === null) {
+    if (cashout === null) {
       return {
         players: [],
         parseError: `Invalid cash-out amount for "${name}". Use dollars (e.g. 120 or 120.50).`,
       };
     }
-    players.push({ id: row.id, name, cashoutCents: cents });
+
+    let buyinCents: number;
+    if (mode === "uniform") {
+      buyinCents = uniformBuyinCents;
+    } else {
+      const parsed = dollarsStringToCents(row.buyin);
+      if (parsed === null) {
+        return {
+          players: [],
+          parseError: `Invalid buy-in amount for "${name}". Use dollars (e.g. 10 or 15.00).`,
+        };
+      }
+      buyinCents = parsed;
+    }
+
+    players.push({ id: row.id, name, buyinCents, cashoutCents: cashout });
   }
   return { players, parseError: null };
 }
@@ -42,6 +73,7 @@ function transfersSummary(transfers: Transfer[]): string {
 }
 
 export default function Home() {
+  const [buyinMode, setBuyinMode] = useState<BuyinMode>("uniform");
   const [buyin, setBuyin] = useState("20");
   const [rows, setRows] = useState<Row[]>(() => [newRow(), newRow()]);
   const [parseError, setParseError] = useState<string | null>(null);
@@ -54,7 +86,7 @@ export default function Home() {
   }
 
   function addRow() {
-    setRows((prev) => [...prev, newRow()]);
+    setRows((prev) => [...prev, newRow(buyinMode === "custom" ? buyin : undefined)]);
   }
 
   function removeRow(id: string) {
@@ -66,18 +98,19 @@ export default function Home() {
     setParseError(null);
     setResult(null);
 
-    if (buyinCents === null) {
+    if (buyinMode === "uniform" && buyinCents === null) {
       setParseError("Enter a valid buy-in amount (e.g. 20 or 20.00).");
       return;
     }
 
-    const { players, parseError: pe } = buildPlayers(rows);
+    const uniform = buyinMode === "uniform" ? (buyinCents as number) : 0;
+    const { players, parseError: pe } = buildPlayers(rows, buyinMode, uniform);
     if (pe) {
       setParseError(pe);
       return;
     }
 
-    setResult(settle(buyinCents, players));
+    setResult(settle(players));
   }
 
   const summary =
@@ -90,8 +123,9 @@ export default function Home() {
           Poker buy-in settlement
         </h1>
         <p className="mt-2 text-sm text-slate-400">
-          Enter the table buy-in and each player&apos;s cash-out. You get the fewest
-          Venmo-style transfers so everyone nets out correctly.
+          Enter buy-ins and each player&apos;s cash-out (same buy-in for everyone, or
+          custom per player). You get the fewest Venmo-style transfers so everyone nets
+          out correctly.
         </p>
       </header>
 
@@ -99,21 +133,51 @@ export default function Home() {
         onSubmit={handleSubmit}
         className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-6 shadow-lg"
       >
-        <label className="block">
-          <span className="text-sm font-medium text-slate-300">Buy-in per player ($)</span>
-          <input
-            type="text"
-            inputMode="decimal"
-            value={buyin}
-            onChange={(e) => setBuyin(e.target.value)}
-            className="mt-1 w-full max-w-xs rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-white outline-none ring-blue-500 focus:ring-2"
-            autoComplete="off"
-          />
-        </label>
+        <fieldset className="border-0 p-0">
+          <legend className="text-sm font-medium text-slate-300">Buy-in</legend>
+          <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-6">
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-200">
+              <input
+                type="radio"
+                name="buyinMode"
+                className="accent-blue-500"
+                checked={buyinMode === "uniform"}
+                onChange={() => setBuyinMode("uniform")}
+              />
+              Same for everyone
+            </label>
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-200">
+              <input
+                type="radio"
+                name="buyinMode"
+                className="accent-blue-500"
+                checked={buyinMode === "custom"}
+                onChange={() => setBuyinMode("custom")}
+              />
+              Custom per player
+            </label>
+          </div>
+        </fieldset>
+
+        {buyinMode === "uniform" && (
+          <label className="mt-4 block">
+            <span className="text-sm font-medium text-slate-300">Buy-in per player ($)</span>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={buyin}
+              onChange={(e) => setBuyin(e.target.value)}
+              className="mt-1 w-full max-w-xs rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-white outline-none ring-blue-500 focus:ring-2"
+              autoComplete="off"
+            />
+          </label>
+        )}
 
         <div className="mt-8">
           <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-slate-300">Players & cash-outs</span>
+            <span className="text-sm font-medium text-slate-300">
+              Players{buyinMode === "custom" ? ", buy-ins, & cash-outs" : " & cash-outs"}
+            </span>
             <button
               type="button"
               onClick={addRow}
@@ -126,7 +190,7 @@ export default function Home() {
           <div className="mt-3 space-y-3">
             {rows.map((row, i) => (
               <div key={row.id} className="flex flex-wrap items-end gap-3">
-                <label className="min-w-[140px] flex-1">
+                <label className="min-w-[120px] flex-1">
                   <span className="text-xs text-slate-500">Name</span>
                   <input
                     type="text"
@@ -137,7 +201,21 @@ export default function Home() {
                     autoComplete="off"
                   />
                 </label>
-                <label className="min-w-[120px] flex-1">
+                {buyinMode === "custom" && (
+                  <label className="min-w-[100px] w-[110px]">
+                    <span className="text-xs text-slate-500">Buy-in ($)</span>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={row.buyin}
+                      onChange={(e) => updateRow(row.id, { buyin: e.target.value })}
+                      placeholder={buyin || "10"}
+                      className="mt-0.5 w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-white outline-none focus:ring-2 focus:ring-blue-500"
+                      autoComplete="off"
+                    />
+                  </label>
+                )}
+                <label className="min-w-[100px] flex-1">
                   <span className="text-xs text-slate-500">Cash-out ($)</span>
                   <input
                     type="text"
@@ -188,8 +266,8 @@ export default function Home() {
         >
           <p className="font-medium">{result.message}</p>
           <p className="mt-1 text-red-300/90">
-            Imbalance: {formatCents(result.imbalanceCents)} (cash-outs minus buy-ins should
-            equal zero).
+            Imbalance: {formatCents(result.imbalanceCents)} (sum of cash-outs minus sum of
+            buy-ins should equal zero).
           </p>
         </div>
       )}
@@ -254,12 +332,19 @@ export default function Home() {
             <summary className="cursor-pointer text-sm font-medium text-slate-400">
               Net by player
             </summary>
-            <ul className="mt-3 space-y-1 text-sm text-slate-300">
+            <ul className="mt-3 space-y-2 text-sm text-slate-300">
               {result.nets.map((n) => (
-                <li key={n.id} className="flex justify-between gap-4">
-                  <span>{n.name}</span>
-                  <span className="font-mono">
-                    {n.netCents === 0 ? "even" : formatCents(n.netCents)}
+                <li
+                  key={n.id}
+                  className="flex flex-col gap-0.5 border-b border-[var(--border)]/40 pb-2 last:border-0 last:pb-0 sm:flex-row sm:items-baseline sm:justify-between sm:gap-4"
+                >
+                  <span className="font-medium text-white">{n.name}</span>
+                  <span className="font-mono text-xs text-slate-400 sm:text-right">
+                    buy-in {formatCents(n.buyinCents)} · cash-out {formatCents(n.cashoutCents)}{" "}
+                    · net{" "}
+                    <span className="text-slate-200">
+                      {n.netCents === 0 ? "even" : formatCents(n.netCents)}
+                    </span>
                   </span>
                 </li>
               ))}

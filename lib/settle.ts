@@ -1,12 +1,16 @@
 export type PlayerInput = {
   id: string;
   name: string;
+  /** Amount this player put into the game (buy-in, including any top-up). */
+  buyinCents: number;
   cashoutCents: number;
 };
 
 export type PlayerNet = {
   id: string;
   name: string;
+  buyinCents: number;
+  cashoutCents: number;
   netCents: number;
 };
 
@@ -31,14 +35,13 @@ export function dollarsStringToCents(value: string): number | null {
   return Math.round(n * 100);
 }
 
-export function computeNets(
-  buyinCents: number,
-  players: PlayerInput[],
-): PlayerNet[] {
+export function computeNets(players: PlayerInput[]): PlayerNet[] {
   return players.map((p) => ({
     id: p.id,
     name: p.name,
-    netCents: p.cashoutCents - buyinCents,
+    buyinCents: p.buyinCents,
+    cashoutCents: p.cashoutCents,
+    netCents: p.cashoutCents - p.buyinCents,
   }));
 }
 
@@ -123,10 +126,7 @@ export type SettleError = {
 
 export type SettleResult = SettleSuccess | SettleError;
 
-export function settle(
-  buyinCents: number,
-  players: PlayerInput[],
-): SettleResult {
+export function settle(players: PlayerInput[]): SettleResult {
   if (players.length === 0) {
     return {
       ok: false,
@@ -137,7 +137,7 @@ export function settle(
     };
   }
 
-  const nets = computeNets(buyinCents, players);
+  const nets = computeNets(players);
   const imbalance = sumNetCents(nets);
 
   if (!isConserved(nets)) {
@@ -145,7 +145,7 @@ export function settle(
       ok: false,
       code: "imbalance",
       message:
-        "Total cash-outs do not match total buy-ins. Check amounts and player count.",
+        "Total cash-outs do not match total buy-ins. Check all buy-ins and cash-outs.",
       nets,
       imbalanceCents: imbalance,
     };
